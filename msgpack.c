@@ -410,11 +410,13 @@ static Janet janet_msgpack_encode(int32_t argc, Janet *argv) {
 static const JanetReg cfuns[] = {
     {"encode", janet_msgpack_encode,
         "(msgpack/encode x &opt encoded-string-type buf)\n\n"
-        "Encodes a janet value into msgpack: https://msgpack.org/"
-        "string-type specifies the msgpack type to use for Janet strings/buffers."
-        "This may be either 'string or 'bytes, or a table mapping Janet types -> encoded types"
-        "For example, {:buffer 'bytes :string 'bytes}"
-        "If buf is provided, the formated mspack is append to buf instead of a new buffer. "
+        "Encodes a janet value into msgpack: https://msgpack.org/\n"
+        "\n"
+        "The string-type specifies the msgpack type to use for Janet strings/buffers.\n"
+        "This may be either 'string or 'bytes, or a table mapping Janet types -> encoded types\n"
+        "For example, {:buffer 'bytes :string 'string}\n"
+        "\n"
+        "If buf is provided, the formated mspack is append to buf instead of a new buffer.\n"
         "Returns the modifed buffer."
     },
     /*
