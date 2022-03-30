@@ -367,9 +367,10 @@ static Janet janet_msgpack_encode(int32_t argc, Janet *argv) {
                     jstruct = janet_unwrap_struct(argv[1]);
                 }
                 assert(jstruct != NULL);
-                int32_t len = janet_struct_length(jstruct);
-                for (int32_t i = 0; i < len; i++) {
+                int32_t capacity = janet_struct_capacity(jstruct);
+                for (int32_t i = 0; i < capacity; i++) {
                     JanetKV kv = jstruct[i];
+                    if (janet_checktype(kv.key, JANET_NIL)) continue;
                     JanetType type_key = (JanetType) parse_named_enum(
                         kv.key, "Janet type name",
                         JANET_TYPE_ENUM
