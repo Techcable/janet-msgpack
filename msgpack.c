@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <assert.h>
+#include <stdint.h>
 
 #include <janet.h>
 
@@ -266,13 +267,13 @@ static void encode_msgpack_int(struct msgpack_encoder *encoder, int64_t signed_v
         } else {
             uint8_t needed_bytes;
             uint64_t value;
-            if (signed_value >= -0x80) {
+            if (signed_value >= INT8_MIN) {
                 needed_bytes = 1;
                 value = (uint8_t) ((int8_t) signed_value);
-            } else if (signed_value >= -0x8000) {
+            } else if (signed_value >= INT16_MIN) {
                 needed_bytes = 2;
                 value = (uint16_t) ((int16_t) signed_value);
-            } else if (signed_value >= -0x800000000) {
+            } else if (signed_value >= ((int64_t) INT32_MIN)) {
                 needed_bytes = 4;
                 value = (uint32_t) ((int32_t) signed_value);
             } else {
