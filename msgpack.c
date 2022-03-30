@@ -261,23 +261,23 @@ static void encode_msgpack_int(struct msgpack_encoder *encoder, int64_t signed_v
         }
     } else {
         assert(signed_value < 0);
-        if (signed_value <= -32) {
+        if (signed_value >= -32) {
             janet_buffer_push_u8(buffer, (uint8_t) 0xE0 | (signed_value + 32));
         } else {
             uint8_t needed_bytes;
             uint64_t value;
-            if (signed_value <= -0x80) {
+            if (signed_value >= -0x80) {
                 needed_bytes = 1;
-                value = ((0xFF + 1) + signed_value);
-            } else if (signed_value <= -0x8000) {
+                value = (uint8_t) ((int8_t) signed_value);
+            } else if (signed_value >= -0x8000) {
                 needed_bytes = 2;
-                value = (0xFFFF + 1) + signed_value;
-            } else if (signed_value <= -0x800000000) {
+                value = (uint16_t) ((int16_t) signed_value);
+            } else if (signed_value >= -0x800000000) {
                 needed_bytes = 4;
-                value = (0xFFFFFFFFLL + 1) + signed_value;
+                value = (uint32_t) ((int32_t) signed_value);
             } else {
                 needed_bytes = 8;
-                value = (uint64_t) value;
+                value = (uint64_t) ((int64_t) signed_value);
             }
             encode_int_tagged(buffer, value, needed_bytes, 0xD0);
         }
