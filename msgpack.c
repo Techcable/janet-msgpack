@@ -41,8 +41,8 @@ struct msgpack_encoder {
     enum msgpack_string_type buffer_type;
 };
 
-static void encode_msgpack_int(struct msgpack_encoder *encoder, int64_t value, bool actually_unsigned);=
-static inline void encode_int_without_tag(JanetBuffer *buffer, uint64_t target, uint8_t needed_bytes)
+static void encode_msgpack_int(struct msgpack_encoder *encoder, int64_t value, bool actually_unsigned);
+static inline void encode_int_without_tag(JanetBuffer *buffer, uint64_t target, uint8_t needed_bytes);
 static inline void encode_int_tagged(JanetBuffer *buffer, uint64_t target, uint8_t needed_bytes, uint8_t tag_start) {
     uint8_t tag;
     switch (needed_bytes) {
@@ -66,7 +66,7 @@ static inline void encode_int_tagged(JanetBuffer *buffer, uint64_t target, uint8
 }
 static void encode_msgpack_string(struct msgpack_encoder *encoder, const uint8_t *bytes, uint32_t len, enum msgpack_string_type string_type);
 static void encode_msgpack_collection_length(struct msgpack_encoder *encoder, int32_t len, uint8_t inline_bitmask, int8_t tag_start) {
-    assert(inline_bitmask & 15 == 0);
+    assert((inline_bitmask & 15) == 0);
     assert(len >= 0);
     JanetBuffer *buffer = encoder->buffer;
     if (len <= 15) {
@@ -148,7 +148,7 @@ static const char *encode_msgpack(struct msgpack_encoder *encoder, Janet value, 
         case JANET_ARRAY: {
             const Janet *items;
             int32_t len;
-            janet_indexed_view(x, &items, &len);
+            janet_indexed_view(value, &items, &len);
             encode_msgpack_collection_length(
                 encoder,
                 len,
@@ -163,10 +163,10 @@ static const char *encode_msgpack(struct msgpack_encoder *encoder, Janet value, 
         case JANET_STRUCT: {
             const JanetKV *kvs;
             int32_t count, capacity;
-            janet_dictionary_view(x, &kvs, &count, &capacity);
+            janet_dictionary_view(value, &kvs, &count, &capacity);
             encode_msgpack_collection_length(
                 encoder,
-                len,
+                count,
                 0x80,
                 0xDE
             );
