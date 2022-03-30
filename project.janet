@@ -1,8 +1,9 @@
 (declare-project
   :name "msgpack"
-  :author "Techcable (Nicholas Schlabach)"
+  :author "Techcable"
   :license "MIT"
-  :version "0.1.0")
+  :version "0.1.0"
+  :repo "https://github.com/Techcable/janet-msgpack")
 
 (declare-native
   :name "msgpack"
