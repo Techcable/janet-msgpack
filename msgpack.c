@@ -403,6 +403,9 @@ static Janet janet_msgpack_encode(int32_t argc, Janet *argv) {
     return janet_wrap_buffer(buffer);
 }
 
+static Janet janet_msgpack_decode(int32_t argc, Janet *argv) {
+    janet_panicf("TODO: Decode is not yet implemented");
+}
 /****************/
 /* Module Entry */
 /****************/
@@ -419,13 +422,10 @@ static const JanetReg cfuns[] = {
         "If buf is provided, the formated mspack is append to buf instead of a new buffer.\n"
         "Returns the modifed buffer."
     },
-    /*
-    {"decode", json_decode,
-        "(json/decode json-source &opt keywords nils)\n\n"
-        "Returns a janet object after parsing JSON. If keywords is truthy, string "
-        "keys will be converted to keywords. If nils is truthy, null will become nil instead "
-        "of the keyword :null."
-    },*/
+    {"decode", janet_msgpack_decode,
+        "(msgapck/decode json-source &opt keywords nils)\n\n"
+        "Returns a janet object after parsing msgapck: https://msgpack.org."
+    },
     {NULL, NULL, NULL}
 };
 
