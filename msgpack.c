@@ -35,6 +35,58 @@ enum msgpack_string_type {
     MSGPACK_STRING_STRING = 0,
     MSGPACK_BYTES_STRING = 1
 };
+struct enum_entry {
+    const char *name;
+    int value;
+};
+static const struct enum_entry MSGPACK_STRING_TYPE_ENUM[] = {
+    {"string", MSGPACK_STRING_STRING},
+    {"bytes", MSGPACK_BYTES_STRING},
+    {NULL, 0}
+};
+static const struct enum_entry JANET_TYPE_ENUM[] = {
+    {"number", JANET_NUMBER},
+    {"nil", JANET_NIL},
+    {"string", JANET_STRING},
+    {"buffer", JANET_BUFFER},
+    {"symbol", JANET_SYMBOL},
+    {"keyword", JANET_KEYWORD},
+    {"struct", JANET_STRUCT},
+    {"table", JANET_TABLE},
+    {NULL, 0}
+};
+/**
+ * Utility to parse an "enum" with named constants specified by the table
+ */
+static int parse_named_enum(Janet value, const char *enum_name, const struct enum_entry *enum_table) {
+    const uint8_t *data;
+    switch (janet_type(value)) {
+        case JANET_SYMBOL:
+            data = janet_unwrap_symbol(value);
+            break;
+        case JANET_KEYWORD:
+            data = janet_unwrap_keyword(value);
+            break;
+        default:
+            janet_panicf("Expected a keyword or symbol, but got a %t", value);
+            assert(false);
+    }
+    int32_t actual_len = janet_string_length(data);
+    while (enum_table->name != NULL) {
+        size_t expected_len = strlen(enum_table->name);
+        if (expected_len == ((size_t) actual_len)) {
+            if (memcmp(enum_table->name, data, expected_len) == 0) {
+                return enum_table->value;
+            }
+        }
+        enum_table += 1;
+    }
+    janet_panicf(
+        "Expected a %s, but got %S",
+        enum_name,
+        data
+    );
+}
 
 struct msgpack_encoder {
     JanetBuffer *buffer;
@@ -287,15 +339,64 @@ static void encode_msgpack_int(struct msgpack_encoder *encoder, int64_t signed_v
     }
 }
 
-
 static Janet janet_msgpack_encode(int32_t argc, Janet *argv) {
-    janet_arity(argc, 1, 2);
-    JanetBuffer *buffer = janet_optbuffer(argv, argc, 1, 32);
+    janet_arity(argc, 1, 3);
+    JanetBuffer *buffer = janet_optbuffer(argv, argc, 2, 32);
     struct msgpack_encoder encoder = {
         .buffer = buffer,
         .string_type = MSGPACK_STRING_STRING,
         .buffer_type = MSGPACK_BYTES_STRING,
     };
+    if (argc > 1) {
+        const JanetKV *jstruct = NULL;
+        switch (janet_type(argv[1])) {
+            case JANET_SYMBOL:
+            case JANET_KEYWORD:
+                encoder.string_type = (enum msgpack_string_type) parse_named_enum(
+                    argv[1], "msgpack string type ('string or 'bytes)",
+                    MSGPACK_STRING_TYPE_ENUM
+                );
+                encoder.buffer_type = encoder.string_type;
+                break;
+            case JANET_TABLE:
+                jstruct = janet_table_to_struct(janet_unwrap_table(argv[1]));
+            case JANET_STRUCT: {
+                if (janet_type(argv[1]) == JANET_STRUCT) {
+                    // Guard against the fallthrough ;)
+                    assert(jstruct == NULL);
+                    jstruct = janet_unwrap_struct(argv[1]);
+                }
+                assert(jstruct != NULL);
+                int32_t len = janet_struct_length(jstruct);
+                for (int32_t i = 0; i < len; i++) {
+                    JanetKV kv = jstruct[i];
+                    JanetType type_key = (JanetType) parse_named_enum(
+                        kv.key, "Janet type name",
+                        JANET_TYPE_ENUM
+                    );
+                    enum msgpack_string_type type_value = (enum msgpack_string_type) parse_named_enum(
+                        kv.value, "msgpack string type",
+                        MSGPACK_STRING_TYPE_ENUM
+                    );
+                    switch (type_key) {
+                        case JANET_STRING:
+                            encoder.string_type = type_value;
+                            break;
+                        case JANET_BUFFER:
+                            encoder.buffer_type = type_value;
+                            break;
+                        default:
+                            janet_panicf("Expected either 'string or 'buffer, but got %T", type_key);
+                    }
+                }
+                break;
+            }
+            default:
+                janet_panicf("Expected either a keyword, symbol, table or struct, but got %t", argv[1]);
+                break;
+        }
+
+    }
     const char *err_msg = encode_msgpack(&encoder, argv[0], 0);
     if (err_msg != NULL) janet_panicf("encode error: %s", err_msg);
     return janet_wrap_buffer(buffer);
@@ -307,8 +408,11 @@ static Janet janet_msgpack_encode(int32_t argc, Janet *argv) {
 
 static const JanetReg cfuns[] = {
     {"encode", janet_msgpack_encode,
-        "(msgpack/encode x &opt buf)\n\n"
+        "(msgpack/encode x &opt encoded-string-type buf)\n\n"
         "Encodes a janet value into msgpack: https://msgpack.org/"
+        "string-type specifies the msgpack type to use for Janet strings/buffers."
+        "This may be either 'string or 'bytes, or a table mapping Janet types -> encoded types"
+        "For example, {:buffer 'bytes :string 'bytes}"
         "If buf is provided, the formated mspack is append to buf instead of a new buffer. "
         "Returns the modifed buffer."
     },
