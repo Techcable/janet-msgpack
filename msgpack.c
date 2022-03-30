@@ -419,8 +419,7 @@ static Janet janet_msgpack_encode(int32_t argc, Janet *argv) {
 
 struct janet_msgpack_decoder {
     mpack_reader_t *reader;
-    // NOTE: All of the following 
-    enum janet_type_mutability string_type;
+    JanetType string_type;
     enum janet_type_mutability bin_type;
     enum janet_type_mutability array_type;
     enum janet_type_mutability map_type;
@@ -435,28 +434,30 @@ static int32_t check_length_cast(uint32_t len) {
 static Janet decode_msgpack_string(struct janet_msgpack_decoder *decoder, uint32_t len, enum msgpack_string_type string_type) {
     check_length_cast(len);
     mpack_reader_t *reader = decoder->reader;
-    enum janet_type_mutability mutability;
+    JanetType decoded_type = decoder->string_type;
     switch (string_type) {
         case MSGPACK_STRING_STRING:
-            mutability = decoder->string_type;
+            decoded_type = decoder->string_type;
             break;
         case MSGPACK_BYTES_STRING:
-            mutability = decoder->bin_type;
+            decoded_type = decoder->bin_type == JANET_TYPE_MUTABLE ? JANET_BUFFER : JANET_STRING;
             break;
         default:
             assert(false);
     }
     const char *data;
-    switch (mutability) {
-        // TODO: Decouple requirement of UTF8 validity from string vs. buffer
-        case JANET_TYPE_IMMUTABLE:
+    switch (decoded_type) {
+        // TODO: Decouple requirement of UTF8 validity from type
+        case JANET_STRING:
+        case JANET_KEYWORD:
+        case JANET_SYMBOL:
             data = mpack_read_utf8_inplace(reader, (size_t) len);
             break;
-        case JANET_TYPE_MUTABLE:
+        case JANET_BUFFER:
             data = mpack_read_bytes_inplace(reader, (size_t) len);
             break;
         default:
-            assert(false);
+            janet_panicf("Unsupported string type: %T", decoded_type);
     }
     switch (string_type) {
         case MSGPACK_STRING_STRING:
@@ -468,14 +469,18 @@ static Janet decode_msgpack_string(struct janet_msgpack_decoder *decoder, uint32
         default:
             assert(false);
     }
-    switch (mutability) {
-        case JANET_TYPE_IMMUTABLE:
+    switch (decoded_type) {
+        case JANET_STRING:
             return janet_wrap_string(janet_string((uint8_t*) data, len));
-        case JANET_TYPE_MUTABLE: {
+        case JANET_BUFFER: {
             JanetBuffer *buffer = janet_buffer((int32_t) len);
             janet_buffer_push_cstring(buffer, data);
             return janet_wrap_buffer(buffer);
         }
+        case JANET_SYMBOL:
+            return janet_symbolv((const uint8_t*) data, len);
+        case JANET_KEYWORD:
+            return janet_keywordv((const uint8_t*) data, len);
         default:
             assert(false);
     }
@@ -555,7 +560,7 @@ static Janet decode_msgpack(struct janet_msgpack_decoder *decoder, int depth) {
             }
         }
         case mpack_type_map: {
-            int32_t len = check_length_cast(mpack_tag_array_count(&tag));
+            int32_t len = check_length_cast(mpack_tag_map_count(&tag));
             JanetTable *table = NULL;
             JanetKV *st = NULL;
             if (decoder->array_type == JANET_TYPE_MUTABLE) {
@@ -564,7 +569,11 @@ static Janet decode_msgpack(struct janet_msgpack_decoder *decoder, int depth) {
                 st = janet_struct_begin(len);
             }
             for (int32_t i = 0; i < len; i++) {
+                // Reset string type to JANET_KEYWORD
+                JanetType old_string_type = decoder->string_type;
+                decoder->string_type = JANET_KEYWORD;
                 Janet key = decode_msgpack(decoder, depth + 1);
+                decoder->string_type = old_string_type;
                 Janet value = decode_msgpack(decoder, depth + 1);
                 if (table != NULL) {
                     janet_table_put(table, key, value);
@@ -607,7 +616,7 @@ static Janet janet_msgpack_decode(int32_t argc, Janet *argv) {
     mpack_reader_set_error_handler(&reader, janet_msgpack_error_handler);
     struct janet_msgpack_decoder decoder = {
         .reader = &reader,
-        .string_type = JANET_TYPE_IMMUTABLE,
+        .string_type = JANET_STRING,
         .bin_type = JANET_TYPE_MUTABLE,
         .array_type = JANET_TYPE_MUTABLE,
         .map_type = JANET_TYPE_MUTABLE
@@ -634,8 +643,25 @@ static Janet janet_msgpack_decode(int32_t argc, Janet *argv) {
                     );
                     JanetType decoded_type = (JanetType) parse_named_enum(
                         kv.value, "Janet type name",
-                        MSGPACK_STRING_TYPE_ENUM
+                        JANET_TYPE_ENUM
                     );
+                    if (msgpack_type == mpack_type_str) {
+                        switch (decoded_type) {
+                            case JANET_KEYWORD:
+                            case JANET_SYMBOL:
+                            case JANET_STRING:
+                            case JANET_BUFFER:
+                                decoder.string_type = decoded_type;
+                                break;
+                            default:
+                                janet_panicf(
+                                    "Invalid string type %T for msgpack type %s",
+                                    decoded_type,
+                                    mpack_type_to_string(msgpack_type)
+                                );
+                        }
+                        break; // breaks loop
+                    }
                     #define HANDLE_CASE(msgpack_type_name, field_name, immutable_variant, mutable_variant) \
                         case msgpack_type_name: { \
                             assert(immutable_variant != mutable_variant); \
@@ -659,7 +685,6 @@ static Janet janet_msgpack_decode(int32_t argc, Janet *argv) {
                             break; \
                         }
                     switch (msgpack_type) {
-                        HANDLE_CASE(mpack_type_str, string_type, JANET_STRING, JANET_BUFFER)
                         HANDLE_CASE(mpack_type_bin, bin_type, JANET_STRING, JANET_BUFFER)
                         HANDLE_CASE(mpack_type_array, array_type, JANET_TUPLE, JANET_ARRAY)
                         HANDLE_CASE(mpack_type_map, map_type, JANET_STRUCT, JANET_TABLE)
