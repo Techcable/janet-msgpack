@@ -159,6 +159,7 @@ static const char *encode_msgpack(struct msgpack_encoder *encoder, Janet value, 
             for (int32_t i = 0; i < len; i++) {
                 checked_call(encode_msgpack(encoder, items[i], depth + 1));
             }
+            break;
         }
         case JANET_TABLE:
         case JANET_STRUCT: {
@@ -176,6 +177,7 @@ static const char *encode_msgpack(struct msgpack_encoder *encoder, Janet value, 
                 checked_call(encode_msgpack(encoder, kvs[i].key, depth + 1));                
                 checked_call(encode_msgpack(encoder, kvs[i].value, depth + 1));
             }
+            break;
         }
         default:
             goto unknown_type;
