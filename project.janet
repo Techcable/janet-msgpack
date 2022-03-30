@@ -6,4 +6,8 @@
 
 (declare-native
   :name "msgpack"
-  :source @["msgpack.c"])
+  :cflags [(string "-I" "mpack/src/mpack") "-DMPACK_EXPECT=0" "-DMPACK_NODE=0" "-DMPACK_WRITER=0"]
+  :source (flatten (tuple
+    @["msgpack.c"]
+    (map (fn [a] (string "mpack/src/mpack/mpack-" a ".c")) ["common" "platform" "reader"])
+  )))

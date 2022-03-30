@@ -5,9 +5,7 @@
 
 #include <janet.h>
 
-// #include "mpack.h"
-
-// NOTE: I don't use the mpack.h API for encoding, I simply encode everything myself
+#include "mpack.h"
 
 static uint64_t ensure_bigendian(uint64_t val) {
     union {
@@ -42,6 +40,22 @@ struct enum_entry {
 static const struct enum_entry MSGPACK_STRING_TYPE_ENUM[] = {
     {"string", MSGPACK_STRING_STRING},
     {"bytes", MSGPACK_BYTES_STRING},
+    {NULL, 0}
+};
+
+enum janet_type_mutability {
+    JANET_TYPE_MUTABLE = 0,
+    JANET_TYPE_IMMUTABLE = 1
+};
+static const struct enum_entry MSGPACK_DECODE_CUSTOMIZE_TYPE_ENUM[] = {
+    {"str", mpack_type_str},
+    {"string", mpack_type_str},
+    {"bin", mpack_type_bin},
+    {"bytes", mpack_type_bin},
+    {"array", mpack_type_array},
+    {"list", mpack_type_array},
+    {"map", mpack_type_map},
+    {"dict", mpack_type_map},
     {NULL, 0}
 };
 static const struct enum_entry JANET_TYPE_ENUM[] = {
@@ -403,8 +417,269 @@ static Janet janet_msgpack_encode(int32_t argc, Janet *argv) {
     return janet_wrap_buffer(buffer);
 }
 
+struct janet_msgpack_decoder {
+    mpack_reader_t *reader;
+    // NOTE: All of the following 
+    enum janet_type_mutability string_type;
+    enum janet_type_mutability bin_type;
+    enum janet_type_mutability array_type;
+    enum janet_type_mutability map_type;
+};
+
+static int32_t check_length_cast(uint32_t len) {
+    if (len > (uint32_t) INT32_MAX) {
+        janet_panic("Length overflowed int32");
+    }
+    return (int32_t) len;
+}
+static Janet decode_msgpack_string(struct janet_msgpack_decoder *decoder, uint32_t len, enum msgpack_string_type string_type) {
+    check_length_cast(len);
+    mpack_reader_t *reader = decoder->reader;
+    enum janet_type_mutability mutability;
+    switch (string_type) {
+        case MSGPACK_STRING_STRING:
+            mutability = decoder->string_type;
+            break;
+        case MSGPACK_BYTES_STRING:
+            mutability = decoder->bin_type;
+            break;
+        default:
+            assert(false);
+    }
+    const char *data;
+    switch (mutability) {
+        // TODO: Decouple requirement of UTF8 validity from string vs. buffer
+        case JANET_TYPE_IMMUTABLE:
+            data = mpack_read_utf8_inplace(reader, (size_t) len);
+            break;
+        case JANET_TYPE_MUTABLE:
+            data = mpack_read_bytes_inplace(reader, (size_t) len);
+            break;
+        default:
+            assert(false);
+    }
+    switch (string_type) {
+        case MSGPACK_STRING_STRING:
+            mpack_done_str(reader);
+            break;
+        case MSGPACK_BYTES_STRING:
+            mpack_done_bin(reader);
+            break;
+        default:
+            assert(false);
+    }
+    switch (mutability) {
+        case JANET_TYPE_IMMUTABLE:
+            return janet_wrap_string(janet_string((uint8_t*) data, len));
+        case JANET_TYPE_MUTABLE: {
+            JanetBuffer *buffer = janet_buffer((int32_t) len);
+            janet_buffer_push_cstring(buffer, data);
+            return janet_wrap_buffer(buffer);
+        }
+        default:
+            assert(false);
+    }
+}
+static Janet decode_msgpack(struct janet_msgpack_decoder *decoder, int depth) {
+    if (depth > JANET_RECURSION_GUARD) janet_panic("mspgack decoding recursed too deeply");
+    mpack_tag_t tag = mpack_read_tag(decoder->reader);
+    mpack_type_t decoded_type = mpack_tag_type(&tag);
+    switch (decoded_type) {
+        case mpack_type_nil:
+            return janet_wrap_nil();
+        case mpack_type_bool:
+            return janet_wrap_boolean(mpack_tag_bool_value(&tag));
+        case mpack_type_int: {
+            int64_t value = mpack_tag_int_value(&tag);
+            if (value >= (int64_t) INT32_MIN && value <= (int64_t) INT32_MAX) {
+                return janet_wrap_integer((int32_t) value);
+            } else {
+                #ifdef JANET_INT_TYPES
+                    return janet_wrap_s64(value);
+                #else
+                    return janet_panic("64-bit numbers are too large")
+                #endif
+            }
+        }
+        case mpack_type_uint: {
+            uint64_t value = mpack_tag_uint_value(&tag);
+            if (value <= (uint64_t) INT32_MAX) {
+                return janet_wrap_integer((int32_t) value);
+            } else {
+                #ifdef JANET_INT_TYPES
+                    return janet_wrap_u64(value);
+                #else
+                    return janet_panic("64-bit numbers are too large")
+                #endif
+            }
+        }
+        case mpack_type_float: {
+            float value = mpack_tag_float_value(&tag);
+            return janet_wrap_number(value);
+        }
+        case mpack_type_double: {
+            double value = mpack_tag_double_value(&tag);
+            return janet_wrap_number(value);
+        }
+        case mpack_type_str: {
+            uint32_t len = mpack_tag_str_length(&tag);
+            return decode_msgpack_string(decoder, len, MSGPACK_STRING_STRING);
+        }
+        case mpack_type_bin: {
+            uint32_t len = mpack_tag_bin_length(&tag);
+            return decode_msgpack_string(decoder, len, MSGPACK_BYTES_STRING);
+        }
+        case mpack_type_array: {
+            int32_t len = check_length_cast(mpack_tag_array_count(&tag));
+            JanetArray *array = NULL;
+            Janet *data = NULL;
+            if (decoder->array_type == JANET_TYPE_MUTABLE) {
+                array = janet_array(len);
+            } else {
+                data = janet_tuple_begin(len);
+            }
+            for (int32_t i = 0; i < len; i++) {
+                Janet val = decode_msgpack(decoder, depth + 1);
+                if (array != NULL) {
+                    janet_array_push(array, val);
+                } else {
+                    data[i] = val;
+                }
+            }
+            mpack_done_array(decoder->reader);
+            if (array != NULL) {
+                return janet_wrap_array(array);
+            } else {
+                assert(data != NULL);
+                return janet_wrap_tuple(janet_tuple_end(data));
+            }
+        }
+        case mpack_type_map: {
+            int32_t len = check_length_cast(mpack_tag_array_count(&tag));
+            JanetTable *table = NULL;
+            JanetKV *st = NULL;
+            if (decoder->array_type == JANET_TYPE_MUTABLE) {
+                table = janet_table(len);
+            } else {
+                st = janet_struct_begin(len);
+            }
+            for (int32_t i = 0; i < len; i++) {
+                Janet key = decode_msgpack(decoder, depth + 1);
+                Janet value = decode_msgpack(decoder, depth + 1);
+                if (table != NULL) {
+                    janet_table_put(table, key, value);
+                } else {
+                    assert(st != NULL);
+                    janet_struct_put(st, key, value);
+                }
+            }
+            mpack_done_map(decoder->reader);
+            if (table != NULL) {
+                return janet_wrap_table(table);
+            } else {
+                assert(st != NULL);
+                return janet_wrap_struct(janet_struct_end(st));
+            }
+        }
+        default:
+            janet_panicf("Unsupported msgpack type: %s", mpack_type_to_string(decoded_type));
+    }
+}
+
+
+static void janet_msgpack_error_handler(mpack_reader_t *reader, mpack_error_t error) {
+    /*
+     * > MPack is safe against non-local jumps out of error handler callbacks.
+     * > This means you are allowed to longjmp or throw an exception.
+     *
+     * As a result, it should be safe to use janet_panicf :)
+     */
+    const char *msg = mpack_error_to_string(error);
+    janet_panicf("Error decoding msgpack: %s", msg);
+}
 static Janet janet_msgpack_decode(int32_t argc, Janet *argv) {
-    janet_panicf("TODO: Decode is not yet implemented");
+    janet_arity(argc, 1, 1);
+    const uint8_t *data;
+    int32_t len;
+    janet_bytes_view(argv[0], &data, &len);
+    mpack_reader_t reader;
+    mpack_reader_init_data(&reader, (char*) data, len);
+    mpack_reader_set_error_handler(&reader, janet_msgpack_error_handler);
+    struct janet_msgpack_decoder decoder = {
+        .reader = &reader,
+        .string_type = JANET_TYPE_IMMUTABLE,
+        .bin_type = JANET_TYPE_MUTABLE,
+        .array_type = JANET_TYPE_MUTABLE,
+        .map_type = JANET_TYPE_MUTABLE
+    };
+    const JanetKV *jstruct = NULL;
+    if (argc > 1) {
+        switch (janet_type(argv[1])) {
+            case JANET_TABLE:
+                jstruct = janet_table_to_struct(janet_unwrap_table(argv[1]));
+            case JANET_STRUCT: {
+                if (janet_type(argv[1]) == JANET_STRUCT) {
+                    // Guard against the fallthrough ;)
+                    assert(jstruct == NULL);
+                    jstruct = janet_unwrap_struct(argv[1]);
+                }
+                assert(jstruct != NULL);
+                int32_t capacity = janet_struct_capacity(jstruct);
+                for (int32_t i = 0; i < capacity; i++) {
+                    JanetKV kv = jstruct[i];
+                    if (janet_checktype(kv.key, JANET_NIL)) continue;
+                    mpack_type_t msgpack_type = (mpack_type_t) parse_named_enum(
+                        kv.key, "msgpack type name",
+                        MSGPACK_DECODE_CUSTOMIZE_TYPE_ENUM
+                    );
+                    JanetType decoded_type = (JanetType) parse_named_enum(
+                        kv.value, "Janet type name",
+                        MSGPACK_STRING_TYPE_ENUM
+                    );
+                    #define HANDLE_CASE(msgpack_type_name, field_name, immutable_variant, mutable_variant) \
+                        case msgpack_type_name: { \
+                            assert(immutable_variant != mutable_variant); \
+                            switch (decoded_type) { \
+                                case mutable_variant: \
+                                    decoder.field_name = JANET_TYPE_MUTABLE; \
+                                    break; \
+                                case immutable_variant: \
+                                    decoder.field_name = JANET_TYPE_IMMUTABLE; \
+                                    break; \
+                                default: \
+                                    janet_panicf( \
+                                        "Expected either Janet type %s or %s for %s, but got %T", \
+                                        #immutable_variant, \
+                                        #mutable_variant, \
+                                        mpack_type_to_string(msgpack_type), \
+                                        decoded_type \
+                                    ); \
+                                    break; \
+                            } \
+                            break; \
+                        }
+                    switch (msgpack_type) {
+                        HANDLE_CASE(mpack_type_str, string_type, JANET_STRING, JANET_BUFFER)
+                        HANDLE_CASE(mpack_type_bin, bin_type, JANET_STRING, JANET_BUFFER)
+                        HANDLE_CASE(mpack_type_array, array_type, JANET_TUPLE, JANET_ARRAY)
+                        HANDLE_CASE(mpack_type_map, map_type, JANET_STRUCT, JANET_TABLE)
+                        default:
+                            janet_panicf(
+                                "Unable to customize Janet type corresponding to msgpack type %s",
+                                mpack_type_to_string(msgpack_type)
+                            );
+                    }
+                    #undef HANDLE_CASE
+                }
+                break;
+            }
+            default:
+                janet_panicf("Expected either a table or struct, but got %t", argv[1]);
+                break;
+        }
+    }
+    return decode_msgpack(&decoder, 0);
+
 }
 /****************/
 /* Module Entry */
@@ -423,7 +698,7 @@ static const JanetReg cfuns[] = {
         "Returns the modifed buffer."
     },
     {"decode", janet_msgpack_decode,
-        "(msgapck/decode json-source &opt keywords nils)\n\n"
+        "(msgapck/decode bytes &opt decoded-types)\n\n"
         "Returns a janet object after parsing msgapck: https://msgpack.org."
     },
     {NULL, NULL, NULL}
