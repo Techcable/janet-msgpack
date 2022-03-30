@@ -1,16 +1,15 @@
-[WIP] janet-msgpack
+janet-msgpack
 ==============
-An implementation of [msgpack](https://msgpack.org) for janet.
+An implementation of [msgpack](https://msgpack.org) for [Janet](https://janet-lang.org).
 
 ## Features
 - Supports encoding most Janet types (tables, arrays, primitives, etc...)
-- Uses ludocdoe/mpack for decode (*TODO*), hand-coded encoding.
-## TODO
-- Support decoding values (not just encoding)
-- Support configurable string/buffer encoding (either msgpack bytes or msgpack strings)
-- Automated testing with comparison to Python impl
-- [American Fuzzy Lop](https://lcamtuf.coredump.cx/afl/)
+- Uses ludocdoe/mpack for decode, hand-coded encoding.
 
+## TODO
+- Automated testing with comparison to Python impl
+  - Right now I've just done some basic testing by hand ^\_^
+- [American Fuzzy Lop](https://lcamtuf.coredump.cx/afl/)
 
 ## Credits
 I.E: Libraries and copied code
