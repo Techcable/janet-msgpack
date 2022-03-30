@@ -221,7 +221,7 @@ static inline void encode_int_without_tag(JanetBuffer *buffer, uint64_t target, 
 static void encode_msgpack_string(struct msgpack_encoder *encoder, const uint8_t *bytes, uint32_t len, enum msgpack_string_type desired_type) {
     JanetBuffer *buffer = encoder->buffer;
     if (len < 32 && desired_type == MSGPACK_STRING_STRING) {
-        janet_buffer_push_u8(buffer, 0xA9); 
+        janet_buffer_push_u8(buffer, 0xA0 | len); 
         janet_buffer_push_bytes(buffer, bytes, len);
     } else {
         uint8_t needed_len_bytes;
