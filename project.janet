@@ -6,4 +6,4 @@
 
 (declare-native
   :name "msgpack"
-  :source @["json.c"])
+  :source @["msgpack.c"])

@@ -34,23 +34,62 @@ enum msgpack_string_type {
     MSGPACK_STRING_STRING = 0,
     MSGPACK_BYTES_STRING = 1
 };
+
 struct msgpack_encoder {
     JanetBuffer *buffer;
     enum msgpack_string_type string_type;
     enum msgpack_string_type buffer_type;
 };
-static void encode_msgpack_int(struct msgpack_encoder *encoder, int64_t value, bool actually_unsigned);
+
+static void encode_msgpack_int(struct msgpack_encoder *encoder, int64_t value, bool actually_unsigned);=
+static inline void encode_int_without_tag(JanetBuffer *buffer, uint64_t target, uint8_t needed_bytes)
+static inline void encode_int_tagged(JanetBuffer *buffer, uint64_t target, uint8_t needed_bytes, uint8_t tag_start) {
+    uint8_t tag;
+    switch (needed_bytes) {
+        case 1:
+            tag = tag_start;
+            break;
+        case 2:
+            tag = tag_start + 1;
+            break;
+        case 4:
+            tag = tag_start + 2;
+            break;
+        case 8:
+            tag = tag_start + 3;
+            break;
+        default:
+            assert(false);
+    }
+    janet_buffer_push_u8(buffer, tag);
+    encode_int_without_tag(buffer, target, needed_bytes);
+}
 static void encode_msgpack_string(struct msgpack_encoder *encoder, const uint8_t *bytes, uint32_t len, enum msgpack_string_type string_type);
+static void encode_msgpack_collection_length(struct msgpack_encoder *encoder, int32_t len, uint8_t inline_bitmask, int8_t tag_start) {
+    assert(inline_bitmask & 15 == 0);
+    assert(len >= 0);
+    JanetBuffer *buffer = encoder->buffer;
+    if (len <= 15) {
+        janet_buffer_push_u8(buffer, inline_bitmask | (uint8_t) len);
+    } else if (len <= 0xFFFF) {
+        janet_buffer_push_u8(buffer, tag_start);
+        encode_int_without_tag(buffer, (uint32_t) len, 2);
+    } else {
+        janet_buffer_push_u8(buffer, tag_start + 1);
+        encode_int_without_tag(buffer, (uint32_t) len, 4);
+    }
+}
 static const char *encode_msgpack(struct msgpack_encoder *encoder, Janet value, int depth) {
     if (depth > JANET_RECURSION_GUARD) return "recursed too deeply";
-    #define checked_call(call) do { \
-            const char *sub_err = call; \
-            if (sub_err != NULL) return sub_err; \
-        } while (false)
+#define checked_call(call) do { \
+        const char *sub_err = call; \
+        if (sub_err != NULL) return sub_err; \
+    } while (false)
     switch (janet_type(value)) {
-        case JANET_NIL:
+        case JANET_NIL: {
             janet_buffer_push_u8(encoder->buffer, 0xC0);
             break;
+        }
         case JANET_BOOLEAN:
             if (janet_unwrap_boolean(value)) {
                 janet_buffer_push_u8(encoder->buffer, 0xC3);
@@ -105,39 +144,67 @@ static const char *encode_msgpack(struct msgpack_encoder *encoder, Janet value, 
             }
             #endif // JANET_INT_TYPES
             goto unknown_type;
+        case JANET_TUPLE:
+        case JANET_ARRAY: {
+            const Janet *items;
+            int32_t len;
+            janet_indexed_view(x, &items, &len);
+            encode_msgpack_collection_length(
+                encoder,
+                len,
+                0x90,
+                0xDC
+            );
+            for (int32_t i = 0; i < len; i++) {
+                checked_call(encode_msgpack(encoder, items[i], depth + 1));
+            }
+        }
+        case JANET_TABLE:
+        case JANET_STRUCT: {
+            const JanetKV *kvs;
+            int32_t count, capacity;
+            janet_dictionary_view(x, &kvs, &count, &capacity);
+            encode_msgpack_collection_length(
+                encoder,
+                len,
+                0x80,
+                0xDE
+            );
+            for (int32_t i = 0; i < capacity; i++) {
+                if (janet_checktype(kvs[i].key, JANET_NIL))  continue;
+                checked_call(encode_msgpack(encoder, kvs[i].key, depth + 1));                
+                checked_call(encode_msgpack(encoder, kvs[i].value, depth + 1));
+            }
+        }
         default:
             goto unknown_type;
     }
     return NULL;
-    unknown_type:
-        // TODO: Some type info here would be nice
-        return "type not supported";
+unknown_type:
+    // TODO: Some type info here would be nice
+    return "type not supported";
 }
 union byteify {
     uint64_t val;
     char bytes[8];
 };
-static inline void encode_int_directly(JanetBuffer *buffer, uint64_t target, uint8_t needed_bytes, uint8_t tag_start) {
+static inline void encode_int_without_tag(JanetBuffer *buffer, uint64_t target, uint8_t needed_bytes) {
     janet_buffer_ensure(buffer, buffer->capacity, needed_bytes + 1);
     switch (needed_bytes) {
         case 1:
-            janet_buffer_push_u8(buffer, tag_start);
             janet_buffer_push_u8(buffer, (uint8_t) target);
             break;
         case 2:
-            janet_buffer_push_u8(buffer, tag_start + 1);
             janet_buffer_push_u8(buffer, (uint8_t) (target >> 8));
             janet_buffer_push_u8(buffer, (uint8_t) (target & 0xFF));
             break;
         case 4:
-            janet_buffer_push_u8(buffer, tag_start + 2);
             janet_buffer_push_u8(buffer, (uint8_t) (target >> 24));
             janet_buffer_push_u8(buffer, (uint8_t) ((target >> 16) & 0xFF));
             janet_buffer_push_u8(buffer, (uint8_t) ((target >> 8) & 0xFF));
             janet_buffer_push_u8(buffer, (uint8_t) (target & 0xFF));
             break;
         case 8:
-            janet_buffer_push_u8(buffer, tag_start + 3);
             janet_buffer_push_u8(buffer, (uint8_t) ((target >> 56) & 0xFF));
             janet_buffer_push_u8(buffer, (uint8_t) ((target >> 48) & 0xFF));
             janet_buffer_push_u8(buffer, (uint8_t) ((target >> 40) & 0xFF));
@@ -166,7 +233,7 @@ static void encode_msgpack_string(struct msgpack_encoder *encoder, const uint8_t
             assert(len <= 0xFFFFFFFF);
             needed_len_bytes = 4;
         }
-        encode_int_directly(buffer, len, needed_len_bytes, desired_type == MSGPACK_STRING_STRING ? 0xD9 : 0xC4);
+        encode_int_tagged(buffer, len, needed_len_bytes, desired_type == MSGPACK_STRING_STRING ? 0xD9 : 0xC4);
         janet_buffer_push_bytes(buffer, bytes, len);
     }
 }
@@ -190,7 +257,7 @@ static void encode_msgpack_int(struct msgpack_encoder *encoder, int64_t signed_v
             } else {
                 needed_bytes = 8;
             }
-            encode_int_directly(buffer, value, needed_bytes, 0xCC);
+            encode_int_tagged(buffer, value, needed_bytes, 0xCC);
         }
     } else {
         assert(signed_value < 0);
@@ -212,7 +279,7 @@ static void encode_msgpack_int(struct msgpack_encoder *encoder, int64_t signed_v
                 needed_bytes = 8;
                 value = (uint64_t) value;
             }
-            encode_int_directly(buffer, value, needed_bytes, 0xD0);
+            encode_int_tagged(buffer, value, needed_bytes, 0xD0);
         }
     }
 }
