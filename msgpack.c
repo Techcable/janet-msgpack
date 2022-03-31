@@ -146,12 +146,8 @@ static void encode_msgpack_collection_length(struct msgpack_encoder *encoder, in
         encode_int_without_tag(buffer, (uint32_t) len, 4);
     }
 }
-static const char *encode_msgpack(struct msgpack_encoder *encoder, Janet value, int depth) {
-    if (depth > JANET_RECURSION_GUARD) return "recursed too deeply";
-#define checked_call(call) do { \
-        const char *sub_err = call; \
-        if (sub_err != NULL) return sub_err; \
-    } while (false)
+static void encode_msgpack(struct msgpack_encoder *encoder, Janet value, int depth) {
+    if (depth > JANET_RECURSION_GUARD) janet_panic("recursed too deeply");
     switch (janet_type(value)) {
         case JANET_NIL: {
             janet_buffer_push_u8(encoder->buffer, 0xC0);
@@ -223,7 +219,7 @@ static const char *encode_msgpack(struct msgpack_encoder *encoder, Janet value, 
                 0xDC
             );
             for (int32_t i = 0; i < len; i++) {
-                checked_call(encode_msgpack(encoder, items[i], depth + 1));
+                encode_msgpack(encoder, items[i], depth + 1);
             }
             break;
         }
@@ -240,18 +236,16 @@ static const char *encode_msgpack(struct msgpack_encoder *encoder, Janet value, 
             );
             for (int32_t i = 0; i < capacity; i++) {
                 if (janet_checktype(kvs[i].key, JANET_NIL))  continue;
-                checked_call(encode_msgpack(encoder, kvs[i].key, depth + 1));                
-                checked_call(encode_msgpack(encoder, kvs[i].value, depth + 1));
+                encode_msgpack(encoder, kvs[i].key, depth + 1);
+                encode_msgpack(encoder, kvs[i].value, depth + 1);
             }
             break;
         }
         default:
             goto unknown_type;
     }
-    return NULL;
 unknown_type:
-    // TODO: Some type info here would be nice
-    return "type not supported";
+    janet_panicf("Unknown type: %t", value);
 }
 union byteify {
     uint64_t val;
