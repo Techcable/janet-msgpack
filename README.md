@@ -5,10 +5,9 @@ An implementation of [msgpack](https://msgpack.org) for [Janet](https://janet-la
 ## Features
 - Supports encoding most Janet types (tables, arrays, primitives, etc...)
 - Uses ludocdoe/mpack for decode, hand-coded encoding.
+- Automated testing with comparison to Python impl
 
 ## TODO
-- Automated testing with comparison to Python impl
-  - Right now I've just done some basic testing by hand ^\_^
 - [American Fuzzy Lop](https://lcamtuf.coredump.cx/afl/)
 
 ## Credits
