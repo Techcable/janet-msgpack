@@ -1,7 +1,7 @@
 (import msgpack)
 
 
-(def data-dir "data")
+(def data-dir "test/data")
 (defn run-test [data-file]
   (def path (string/join [data-dir data-file] "/"))
   (print "Testing: " path)
@@ -10,7 +10,7 @@
   (file/close f)
   (def actual-data (msgpack/decode data))
   (def proc (def {:out expected-data-out} (os/spawn
-    ["python3" "reference.py" path]
+    ["python3" "test/reference.py" path]
     :exp
     {:out :pipe})))
   (def expected-data-text (:read expected-data-out :all))
