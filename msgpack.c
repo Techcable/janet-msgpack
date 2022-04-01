@@ -198,10 +198,10 @@ static void encode_msgpack(struct msgpack_encoder *encoder, Janet value, int dep
             switch (janet_is_int(value)) {
                 case JANET_INT_S64:
                     encode_msgpack_int(encoder, janet_unwrap_s64(value), false);
-                    return NULL;
+                    return;
                 case JANET_INT_U64:
                     encode_msgpack_int(encoder, (int64_t) janet_unwrap_u64(value), /* actually unsigned */ true);
-                    return NULL;
+                    return;
                 default:
                     goto unknown_type;
             }
@@ -406,8 +406,7 @@ static Janet janet_msgpack_encode(int32_t argc, Janet *argv) {
         }
 
     }
-    const char *err_msg = encode_msgpack(&encoder, argv[0], 0);
-    if (err_msg != NULL) janet_panicf("encode error: %s", err_msg);
+    encode_msgpack(&encoder, argv[0], 0);
     return janet_wrap_buffer(buffer);
 }
 
