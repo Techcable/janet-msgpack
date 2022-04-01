@@ -9,6 +9,7 @@ An implementation of [msgpack](https://msgpack.org) for [Janet](https://janet-la
 
 ## TODO
 - [American Fuzzy Lop](https://lcamtuf.coredump.cx/afl/)
+  - This is difficult to do because we aren't a C program
 
 ## Credits
 I.E: Libraries and copied code
